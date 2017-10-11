@@ -1,9 +1,13 @@
-﻿using RimWorld.Planet;
-using System;
+﻿using System;
 using System.Collections;
 using System.IO;
 using UnityEngine;
 using Verse;
+
+using MemorySize;
+using System.Runtime.InteropServices;
+using System.Diagnostics;
+//using System.Runtime;
 
 namespace MapRenderer
 {
@@ -30,7 +34,7 @@ namespace MapRenderer
         private int curX = 0;
         private int curZ = 0;
 
-        private RenderTexture origRT;
+        private RenderTexture cameraTexture;
 
         private int numCamsX;
         private int numCamsZ;
@@ -57,15 +61,46 @@ namespace MapRenderer
             this.viewWidth = MapRendererMod.settings.quality;
             this.viewHeight = MapRendererMod.settings.quality;
 
+            // NOTE: this probably needs the wrapping for OutOfMemory too...
+            // setup camera with target render texture
+            this.cameraTexture = new RenderTexture(this.viewWidth, this.viewHeight, 24);
+            RenderTexture.active = this.camera.targetTexture;
+
             this.numCamsX = (map.Size.x / 25);
             this.numCamsZ = (map.Size.z / 25);
 
             this.mapImageWidth = this.viewWidth * this.numCamsX;
             this.mapImageHeight = this.viewHeight * this.numCamsZ;
 
-            this.mapImage = new Texture2D(this.mapImageWidth, this.mapImageHeight, TextureFormat.RGB24, false);
+            long memoryNeeded = MemorySizeUtil.GetTextureSize(this.mapImageWidth, 24);
+#if DEBUG
+            Log.Message($"{memoryNeeded.GetMBs()}");
+#endif
+            Log.Message($"GetTotalMemory: {GC.GetTotalMemory(true).GetMBs()}");
+            Log.Message($"GetMonoHeapSize: {Profiler.GetMonoHeapSize().GetMBs()}");
+            Log.Message($"GetMonoUsedSize: {Profiler.GetMonoUsedSize().GetMBs()}");
+            Log.Message($"GetTotalAllocatedMemory: {Profiler.GetTotalAllocatedMemory().GetMBs()}");
+            Log.Message($"GetTotalReservedMemory: {Profiler.GetTotalReservedMemory().GetMBs()}");
+            Log.Message($"GetTotalUnusedReservedMemory: {Profiler.GetTotalUnusedReservedMemory().GetMBs()}");
+            try
+            {
+                // NOTE: this keeps heap allocation from throwing Out Of Memory -> Access Violation
+                // UNITY BUG: Erdelf suggests that this is a unity bug but Byte[] forces necessary allocation (then GC'ed?)
+                // NOTE: with the Byte[] we now have catchable errors. Huzzah!
+                Byte[] bytes = new Byte[memoryNeeded];
+                this.mapImage = new Texture2D(this.mapImageWidth, this.mapImageHeight, TextureFormat.RGB24, false);
+                bytes = new Byte[0]; // dereference
+                Render();
+            }
+            catch (UnityException ue)
+            {
+                Log.Message($"{ue}");
+            }
+            catch (OutOfMemoryException e)
+            {
+                Log.Message($"{e}");
+            }
 
-            this.origRT = RenderTexture.active;
         }
 
         public void Render()
@@ -101,19 +136,20 @@ namespace MapRenderer
                 this.UpdatePosition(x, z);
             }
 
-            // TODO: Good god jim... use enums... (if you can...)
             if (MapRendererMod.settings.exportFormat == "PNG")
                 File.WriteAllBytes(OurTempSquareImageLocation(imageName), this.mapImage.EncodeToPNG());
             else
                 File.WriteAllBytes(OurTempSquareImageLocation(imageName, "jpg"), this.mapImage.EncodeToJPG());
 
-            Destroy(this.mapImage);
-            
             // Restore camera
-            RenderTexture.active = this.origRT;
-            this.camera.targetTexture = null;
+            this.camera.targetTexture = RenderTexture.active = null;
             this.camera.GetComponent<CameraDriver>().enabled = true;
             Find.CameraDriver.SetRootPosAndSize(rememberedRootPos, rememberedRootSize);
+
+            // Clean-up
+            GC.Collect();
+            Destroy(this.mapImage);
+            Destroy(this.cameraTexture);
         }
 
         private void UpdatePosition(float x, float? z = null)
@@ -127,10 +163,6 @@ namespace MapRenderer
         {
             yield return new WaitForEndOfFrame();
 
-            // setup camera with target render texture
-            this.camera.targetTexture = new RenderTexture(this.viewWidth, this.viewHeight, 24);
-            RenderTexture.active = this.camera.targetTexture;
-
             // render the texture
             if (MapRendererMod.settings.showWeather) this.map.weatherManager.DrawAllWeather();
             this.camera.Render();
@@ -141,7 +173,6 @@ namespace MapRenderer
 
         private string OurTempSquareImageLocation(string imageName, string ext = "png")
         {
-            //string r = Application.dataPath + "/" + imageName + ext;
             return Path.Combine(MapRendererMod.settings.path, $"{imageName}.{ext}");
         }
 

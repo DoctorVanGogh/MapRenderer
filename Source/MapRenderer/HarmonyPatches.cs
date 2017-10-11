@@ -4,6 +4,9 @@ using System.Reflection.Emit;
 using Verse;
 using RimWorld;
 using Harmony;
+using System.Diagnostics;
+using UnityEngine;
+using System;
 
 namespace MapRenderer
 {

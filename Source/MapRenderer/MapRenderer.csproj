@@ -57,6 +57,7 @@
   <ItemGroup>
     <Compile Include="Dialog_RenderMap.cs" />
     <Compile Include="HarmonyPatches.cs" />
+    <Compile Include="MemorySizeUtils.cs" />
     <Compile Include="ModSettings.cs" />
     <Compile Include="ModWindowHelper.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

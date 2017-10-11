@@ -39,7 +39,7 @@ namespace MapRenderer
             this.buttonAText = "MR_RenderButtonLabel".Translate();
             this.buttonAAction = () => {
                 RenderMap renderMap = new RenderMap();
-                renderMap.Render();
+                //renderMap.Render();
             };
             this.buttonBText = "MR_CloseButtoLabel".Translate();
             this.buttonBAction = () => { };
