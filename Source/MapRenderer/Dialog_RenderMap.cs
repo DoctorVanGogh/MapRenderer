@@ -1,7 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using Verse;
 using RimWorld;
 using UnityEngine;
@@ -38,7 +35,8 @@ namespace MapRenderer
             this.text = "MR_MapRenderDescription".Translate();
             this.buttonAText = "MR_RenderButtonLabel".Translate();
             this.buttonAAction = () => {
-                RenderMap renderMap = new RenderMap();
+                RenderMap renderMap = GameObject.Find("GameRoot").AddComponent<RenderMap>() as RenderMap;
+                renderMap.Initialize();
                 renderMap.Render();
             };
             this.buttonBText = "MR_CloseButtoLabel".Translate();
@@ -63,10 +61,6 @@ namespace MapRenderer
             Widgets.BeginScrollView(outRect, ref this.scrollPosition, viewRect, true);
             Widgets.Label(new Rect(0f, 0f, viewRect.width, viewRect.height), this.text);
             Widgets.EndScrollView();
-            /*if (this.buttonADestructive)
-            {
-                GUI.color = new Color(1f, 0.3f, 0.35f);
-            }*/
             string label = (!this.InteractionDelayExpired) ? (this.buttonAText + "(" + Mathf.Ceil(this.TimeUntilInteractive).ToString("F0") + ")") : this.buttonAText;
             float width2 = inRect.width / 2f - 20f;
             if (Widgets.ButtonText(new Rect(inRect.width / 2f + 20f, inRect.height - ButtonHeight, width2, ButtonHeight), label, true, false, true) && this.InteractionDelayExpired)

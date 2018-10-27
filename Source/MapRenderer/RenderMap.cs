@@ -1,6 +1,6 @@
-﻿using RimWorld.Planet;
-using System;
-using System.Collections;
+﻿using System.Collections;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using UnityEngine;
 using Verse;
@@ -9,11 +9,13 @@ namespace MapRenderer
 {
     // https://forum.unity3d.com/threads/render-texture-to-png-arbg32-no-opaque-pixels.317451/
 
+    // NOTE: creating a new camera would be a better solution (how?)
     public class RenderMap : MonoBehaviour
     {
+        private static bool isRendering;
+
         private Camera camera;
         private Map map;
-        private Texture2D mapImage;
 
         private Vector3 rememberedRootPos;
         private float rememberedRootSize;
@@ -30,29 +32,37 @@ namespace MapRenderer
         private int curX = 0;
         private int curZ = 0;
 
-        private RenderTexture origRT;
-
         private int numCamsX;
         private int numCamsZ;
 
         private float start;
 
-        // NOTE: creating a new camera would be a better solution (how?)
-        public RenderMap()
+        private BitmapData bmpData;
+        private Bitmap mapImage;
+
+        private RenderTexture rt;
+        private Texture2D tempTexture;
+
+        public static bool IsRendering { get => isRendering; set => isRendering = value; }
+
+        // NOTE: unity is not calling the constructor, so we manually call it
+        public RenderMap() { }
+
+        public void Initialize()
         {
             this.camera = Find.Camera;
-            this.map = Find.VisibleMap;
+            this.map = Find.CurrentMap;
 
             // save camera data
             this.rememberedRootPos = map.rememberedCameraPos.rootPos;
             this.rememberedRootSize = map.rememberedCameraPos.rootSize;
 
-            this.camera.orthographicSize = 12.5f; //Mathf.Round(this.camera.orthographicSize);
+            this.camera.orthographicSize = 12.5f;
             this.start = this.camera.orthographicSize;
             this.camera.transform.position = new Vector3(this.start, rememberedRootPos.y, this.start);
 
             this.cameraHeight = Mathf.RoundToInt(this.camera.orthographicSize * 2);
-            this.cameraWidth = this.cameraHeight; // * cam.aspect;
+            this.cameraWidth = this.cameraHeight;
 
             this.viewWidth = MapRendererMod.settings.quality;
             this.viewHeight = MapRendererMod.settings.quality;
@@ -63,19 +73,25 @@ namespace MapRenderer
             this.mapImageWidth = this.viewWidth * this.numCamsX;
             this.mapImageHeight = this.viewHeight * this.numCamsZ;
 
-            this.mapImage = new Texture2D(this.mapImageWidth, this.mapImageHeight, TextureFormat.RGB24, false);
-
-            this.origRT = RenderTexture.active;
+            this.mapImage = new Bitmap(this.mapImageWidth, this.mapImageHeight, PixelFormat.Format24bppRgb);
         }
 
-        public void Render()
-        {
-            Find.CameraDriver.StartCoroutine(Renderer("mapTexture"));
-        }
+        public void Render() => Find.CameraDriver.StartCoroutine(Renderer("mapTexture"));
 
-        public IEnumerator Renderer(string imageName)
+        private IEnumerator Renderer(string imageName)
         {
+            IsRendering = true;
+#if DEBUG
+            Log.Message("Start Renderer");
+#endif
+
+            // NOTE: this could potentially go in the constructor...
             this.camera.GetComponent<CameraDriver>().enabled = false;
+            //GL.Viewport(new Rect(0, 0, this.viewWidth, this.viewHeight));
+
+            // setup camera with target render texture
+            this.rt = new RenderTexture(this.viewWidth, this.viewHeight, 32, RenderTextureFormat.ARGB32);
+            this.tempTexture = new Texture2D(this.viewWidth, this.viewHeight, TextureFormat.RGB24, false);
 
             // NOTE: not sure why this happens but sometimes need to rerender the first frame
             IEnumerator e = this.RenderCurrentView();
@@ -101,20 +117,32 @@ namespace MapRenderer
                 this.UpdatePosition(x, z);
             }
 
-            // TODO: Good god jim... use enums... (if you can...)
             if (MapRendererMod.settings.exportFormat == "PNG")
-                File.WriteAllBytes(OurTempSquareImageLocation(imageName), this.mapImage.EncodeToPNG());
+                mapImage.Save(FindValidPath(imageName, "png"), ImageFormat.Png);
             else
-                File.WriteAllBytes(OurTempSquareImageLocation(imageName, "jpg"), this.mapImage.EncodeToJPG());
+                mapImage.Save(FindValidPath(imageName, "jpg"), ImageFormat.Jpeg);
 
-            Destroy(this.mapImage);
-            
-            // Restore camera
-            RenderTexture.active = this.origRT;
-            this.camera.targetTexture = null;
+            // Restore camera and viewport
+            this.RestoreCamera();
             this.camera.GetComponent<CameraDriver>().enabled = true;
             Find.CameraDriver.SetRootPosAndSize(rememberedRootPos, rememberedRootSize);
+            //GL.Viewport(new Rect(0, 0, Screen.width, Screen.height));
+
+            // clean up
+            this.mapImage.Dispose();
+            Destroy(this.rt);
+            Destroy(this.tempTexture);
+            Destroy(this);
+
+            IsRendering = false;
+#if DEBUG
+            Log.Message("Finished Renderer");
+#endif
         }
+
+        private void RestoreCamera() => RenderTexture.active = this.camera.targetTexture = null;
+
+        private void SetCamera() => RenderTexture.active = this.camera.targetTexture = this.rt;
 
         private void UpdatePosition(float x, float? z = null)
         {
@@ -125,26 +153,71 @@ namespace MapRenderer
 
         private IEnumerator RenderCurrentView()
         {
+#if DEBUG
+            Log.Message("Start of RenderCurrentView");
+#endif
             yield return new WaitForEndOfFrame();
+#if DEBUG
+            Log.Message("After WaitForEndOfFrame");
+#endif
 
-            // setup camera with target render texture
-            this.camera.targetTexture = new RenderTexture(this.viewWidth, this.viewHeight, 24);
-            RenderTexture.active = this.camera.targetTexture;
+            this.SetCamera();
+
+            // lock section of bitmap (reverting y)
+            this.bmpData = mapImage.LockBits(new Rectangle(this.curX, this.mapImageHeight-this.curZ-this.viewHeight, this.viewWidth, this.viewHeight), ImageLockMode.ReadWrite, mapImage.PixelFormat);
 
             // render the texture
             if (MapRendererMod.settings.showWeather) this.map.weatherManager.DrawAllWeather();
             this.camera.Render();
 
+#if DEBUG
+            Log.Message("After Render");
+#endif
+
+            /*this.RestoreCamera();
+            yield return new WaitForEndOfFrame();
+            this.SetCamera();*/
+            this.tempTexture.ReadPixels(new Rect(0, 0, this.viewWidth, this.viewHeight), 0, 0, false);
+
             // write to the map image using the current postion
-            this.mapImage.ReadPixels(new Rect(0, 0, this.viewWidth, this.viewHeight), this.curX, this.curZ, false);
+            this.tempTexture.CopyTo(this.bmpData);
+
+            this.mapImage.UnlockBits(bmpData);
+
+            this.RestoreCamera();
+#if DEBUG
+            Log.Message("End of RenderCurrentView");
+#endif
         }
 
-        private string OurTempSquareImageLocation(string imageName, string ext = "png")
+        private string FindValidPath(string imageName, string ext = "png")
         {
-            //string r = Application.dataPath + "/" + imageName + ext;
+            string filePath = ImagePath(imageName, ext);
+            if (!File.Exists(filePath))
+                return filePath;
+            // loop with numbers
+            int i = 1;
+            string newPath;
+            filePath = ImagePath(imageName, noExt: true);
+            do newPath = $"{filePath}{i++}.{ext}";
+            while (File.Exists(newPath));
+            return newPath;
+        }
+
+        private static string ImagePath(string imageName, string ext = "png", bool noExt = false)
+        {
+            if (noExt)
+                return Path.Combine(MapRendererMod.settings.path, $"{imageName}");
             return Path.Combine(MapRendererMod.settings.path, $"{imageName}.{ext}");
         }
 
+        /*public void OnGUI()
+        {
+            this.SetCamera();
+            Find.MapUI.thingOverlays.ThingOverlaysOnGUI();
+            this.RestoreCamera();
+        }*/
+
     }
 }
- 
+
